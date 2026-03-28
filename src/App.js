@@ -228,3 +228,893 @@ function SectionHeader({ title, sub, action, actionLabel, color }) {
 }
 
 // END SEGMENT 1
+// ============================================================
+// STUDYBUDDY — SEGMENT 2 of 5
+// Root App · Landing · Dashboard · Home
+// ============================================================
+
+// ROOT APP
+export default function App() {
+  const [data, setData] = React.useState(null);
+  const [userId, setUserId] = React.useState(null);
+  const [tab, setTab] = React.useState("home");
+  const [syncing, setSyncing] = React.useState(false);
+  const [toast, setToast] = React.useState(null);
+  const pollRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const el = document.createElement("style");
+    el.textContent = GLOBAL_CSS;
+    document.head.appendChild(el);
+    return () => document.head.removeChild(el);
+  }, []);
+
+  React.useEffect(() => {
+    (async () => {
+      const saved = await dbLoad();
+      setData(saved || DEFAULT_STATE);
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    if (!data || !userId) return;
+    pollRef.current = setInterval(async () => {
+      setSyncing(true);
+      const fresh = await dbLoad();
+      if (fresh) setData(fresh);
+      setTimeout(() => setSyncing(false), 400);
+    }, 2500);
+    return () => clearInterval(pollRef.current);
+  }, [data, userId]);
+
+  React.useEffect(() => {
+    if (!userId || !data) return;
+    update(d => { d.lastSeen[userId] = Date.now(); });
+  }, [userId]);
+
+  const update = React.useCallback((fn) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      fn(next);
+      dbSave(next);
+      return next;
+    });
+  }, []);
+
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 2800);
+  };
+
+  if (!data) {
+    return (
+      <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        Loading StudyBuddy...
+      </div>
+    );
+  }
+
+  if (!userId) {
+    return <LandingPage data={data} update={update} onSelect={setUserId} />;
+  }
+
+  return (
+    <DashboardShell
+      data={data}
+      update={update}
+      userId={userId}
+      setUserId={setUserId}
+      tab={tab}
+      setTab={setTab}
+      syncing={syncing}
+      showToast={showToast}
+      toast={toast}
+    />
+  );
+}
+
+// LANDING PAGE
+function LandingPage({ data, update, onSelect }) {
+  const [editingId, setEditingId] = React.useState(null);
+  const [tmpName, setTmpName] = React.useState("");
+  const [hovered, setHovered] = React.useState(null);
+
+  return (
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+      <h1>StudyBuddy</h1>
+
+      {["A","B"].map(uid => {
+        const u = data.users[uid];
+
+        return (
+          <div key={uid} style={{margin:20}}>
+            {editingId === uid ? (
+              <div>
+                <input
+                  value={tmpName}
+                  onChange={e=>setTmpName(e.target.value)}
+                />
+                <button onClick={()=>{
+                  update(d=>{d.users[uid].name=tmpName});
+                  setEditingId(null);
+                }}>
+                  Save
+                </button>
+              </div>
+            ) : (
+              <div>
+                <h3>{u.avatar} {u.name}</h3>
+                <button onClick={()=>onSelect(uid)}>
+                  Enter
+                </button>
+                <button onClick={()=>{
+                  setEditingId(uid);
+                  setTmpName(u.name);
+                }}>
+                  Rename
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+        }
+// ============================================================
+// STUDYBUDDY — SEGMENT 3 of 5
+// Timer · Schedule · Resources
+// ============================================================
+
+// TIMER VIEW
+function TimerView({ data, update, userId, u, otherU, showToast }) {
+  const [localSecs, setLocalSecs] = React.useState(data.timer.seconds);
+  const [preset, setPreset] = React.useState(1500);
+  const [label, setLabel] = React.useState(data.timer.label);
+  const [sessions, setSessions] = React.useState([]);
+  const itvRef = React.useRef(null);
+
+  React.useEffect(() => {
+    setLocalSecs(data.timer.seconds);
+  }, [data.timer.seconds]);
+
+  React.useEffect(() => {
+    setLabel(data.timer.label);
+  }, [data.timer.label]);
+
+  React.useEffect(() => {
+    if (data.timer.running) {
+      itvRef.current = setInterval(() => {
+        setLocalSecs((s) => {
+          if (s <= 1) {
+            clearInterval(itvRef.current);
+            showToast("Session complete!");
+            return 0;
+          }
+          return s - 1;
+        });
+      }, 1000);
+    } else {
+      clearInterval(itvRef.current);
+    }
+
+    return () => clearInterval(itvRef.current);
+  }, [data.timer.running]);
+
+  const start = () => {
+    update((d) => {
+      d.timer = {
+        running: true,
+        seconds: preset,
+        total: preset,
+        label,
+        startedBy: userId,
+        startedAt: Date.now(),
+      };
+    });
+
+    setLocalSecs(preset);
+    showToast("Session started!");
+  };
+
+  const pause = () => {
+    update((d) => {
+      d.timer.running = false;
+      d.timer.seconds = localSecs;
+    });
+  };
+
+  const resume = () => {
+    update((d) => {
+      d.timer.running = true;
+    });
+  };
+
+  const reset = () => {
+    update((d) => {
+      d.timer = {
+        running: false,
+        seconds: preset,
+        total: preset,
+        label,
+        startedBy: null,
+        startedAt: null,
+      };
+    });
+
+    setLocalSecs(preset);
+  };
+
+  const finish = () => {
+    setSessions((prev) => [
+      ...prev,
+      { label, duration: preset - localSecs, ts: Date.now() },
+    ]);
+
+    reset();
+    showToast("Session logged!");
+  };
+  // ============================================================
+// STUDYBUDDY — SEGMENT 4 of 5
+// Doubts · Chat
+// ============================================================
+
+// DOUBTS VIEW
+function DoubtsView({ data, update, userId, u, otherU, other, showToast }) {
+
+  const [question, setQuestion] = React.useState("");
+  const [subject, setSubject] = React.useState("");
+  const [urgency, setUrgency] = React.useState("normal");
+  const [ansMap, setAnsMap] = React.useState({});
+  const [filter, setFilter] = React.useState("all");
+  const [search, setSearch] = React.useState("");
+  const textRef = React.useRef(null);
+
+  const post = () => {
+    if (!question.trim()) {
+      showToast("Type your question first","error");
+      return;
+    }
+
+    update(d => {
+      d.doubts.push({
+        id: Date.now(),
+        question: question.trim(),
+        subject: subject.trim(),
+        urgency,
+        from: userId,
+        answer: null,
+        answeredBy: null,
+        ts: Date.now(),
+        upvotes: []
+      });
+    });
+
+    setQuestion("");
+    setSubject("");
+    setUrgency("normal");
+
+    showToast("Doubt posted!");
+  };
+
+
+  const answer = (id) => {
+
+    const text = ansMap[id]?.trim();
+
+    if (!text) {
+      showToast("Write an answer first","error");
+      return;
+    }
+
+    update(d => {
+
+      const dbt = d.doubts.find(x => x.id === id);
+
+      if (dbt) {
+        dbt.answer = text;
+        dbt.answeredBy = userId;
+        dbt.answeredAt = Date.now();
+      }
+
+    });
+
+    setAnsMap(p => {
+      const n = {...p};
+      delete n[id];
+      return n;
+    });
+
+    showToast("Answer posted!");
+  };
+
+
+  const upvote = (id) => {
+
+    update(d => {
+
+      const dbt = d.doubts.find(x => x.id === id);
+      if (!dbt) return;
+
+      if (!dbt.upvotes) dbt.upvotes = [];
+
+      if (dbt.upvotes.includes(userId))
+        dbt.upvotes = dbt.upvotes.filter(x => x !== userId);
+      else
+        dbt.upvotes.push(userId);
+
+    });
+
+  };
+
+
+  const remove = (id) => {
+
+    update(d => {
+      d.doubts = d.doubts.filter(x => x.id !== id);
+    });
+
+    showToast("Removed");
+
+  };
+
+
+  const URGENCY = {
+    low:    { label:"Low", color:"#34d399" },
+    normal: { label:"Normal", color:"#818cf8" },
+    urgent: { label:"Urgent", color:"#f87171" }
+  };
+
+
+  let items = [...data.doubts];
+
+  if (filter === "mine")
+    items = items.filter(d => d.from === userId);
+
+  if (filter === "unanswered")
+    items = items.filter(d => !d.answer);
+
+  if (filter === "answered")
+    items = items.filter(d => d.answer);
+
+
+  if (search.trim()) {
+
+    items = items.filter(d =>
+      d.question.toLowerCase().includes(search.toLowerCase()) ||
+      d.subject?.toLowerCase().includes(search.toLowerCase())
+    );
+
+  }
+
+
+  items.sort((a,b) => {
+
+    const score = u =>
+      u === "urgent" ? 2 :
+      u === "normal" ? 1 : 0;
+
+    const uDiff = score(b.urgency) - score(a.urgency);
+
+    return uDiff !== 0 ? uDiff : b.ts - a.ts;
+
+  });
+
+
+  return (
+    <div>
+
+      <SectionHeader
+        title="Doubts & Q&A"
+        sub="Post questions, get answers from your study partner"
+        color={u.color}
+      />
+
+      <div style={{marginBottom:20}}>
+
+        <input
+          placeholder="Subject"
+          value={subject}
+          onChange={e => setSubject(e.target.value)}
+          style={iStyle(u.color)}
+        />
+
+        <textarea
+          ref={textRef}
+          placeholder="Write your doubt..."
+          value={question}
+          onChange={e => setQuestion(e.target.value)}
+          rows={4}
+          style={{...iStyle(u.color), marginTop:10}}
+        />
+
+        <button
+          onClick={post}
+          style={btnPrimary(u.color)}
+        >
+          Post Doubt
+        </button>
+
+      </div>
+
+
+      {items.map(dbt => {
+
+        const asker = data.users[dbt.from];
+        const canAnswer = dbt.from !== userId && !dbt.answer;
+
+        return (
+
+          <div key={dbt.id} style={cardStyle(u.color)}>
+
+            <div>
+              <strong>{asker.name}</strong>
+            </div>
+
+            <div style={{margin:"8px 0"}}>
+              {dbt.question}
+            </div>
+
+
+            {dbt.answer && (
+              <div style={{color:"#34d399"}}>
+                Answer: {dbt.answer}
+              </div>
+            )}
+
+
+            {canAnswer && (
+
+              <div>
+
+                <textarea
+                  value={ansMap[dbt.id] || ""}
+                  onChange={e =>
+                    setAnsMap(p => ({
+                      ...p,
+                      [dbt.id]: e.target.value
+                    }))
+                  }
+                />
+
+                <button
+                  onClick={() => answer(dbt.id)}
+                  style={btnPrimary("#34d399")}
+                >
+                  Answer
+                </button>
+
+              </div>
+
+            )}
+
+          </div>
+
+        );
+
+      })}
+
+    </div>
+  );
+
+}
+
+
+
+// ============================================================
+// CHAT VIEW
+// ============================================================
+
+function ChatView({ data, update, userId, u, otherU, other, showToast }) {
+
+  const [msg, setMsg] = React.useState("");
+  const [replyTo, setReplyTo] = React.useState(null);
+  const endRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+
+
+  React.useEffect(() => {
+    endRef.current?.scrollIntoView({behavior:"smooth"});
+  }, [data.chat.length]);
+
+
+  const send = () => {
+
+    const text = msg.trim();
+    if (!text) return;
+
+    update(d => {
+
+      d.chat.push({
+        id: Date.now(),
+        text,
+        from: userId,
+        ts: Date.now(),
+        replyTo: replyTo
+          ? { id: replyTo.id, text: replyTo.text, from: replyTo.from }
+          : null,
+        reactions: {},
+        edited:false
+      });
+
+    });
+
+    setMsg("");
+    setReplyTo(null);
+
+  };
+
+
+  const deleteMsg = (id) => {
+    update(d => {
+      d.chat = d.chat.filter(x => x.id !== id);
+    });
+  };
+
+
+  const startReply = (m) => {
+    setReplyTo(m);
+    inputRef.current?.focus();
+  };
+
+
+  return (
+
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+
+      <h2>Chat</h2>
+
+
+      <div style={{flex:1,overflowY:"auto"}}>
+
+        {data.chat.map(m => {
+
+          const isMe = m.from === userId;
+          const sender = data.users[m.from];
+
+          return (
+
+            <div key={m.id} style={{marginBottom:10}}>
+
+              <strong>{sender.name}</strong>
+
+              <div>
+                {m.text}
+              </div>
+
+              <button onClick={()=>startReply(m)}>Reply</button>
+
+              {isMe && (
+                <button onClick={()=>deleteMsg(m.id)}>
+                  Delete
+                </button>
+              )}
+
+            </div>
+
+          );
+
+        })}
+
+        <div ref={endRef}/>
+
+      </div>
+
+
+      <div style={{display:"flex",gap:8}}>
+
+        <input
+          ref={inputRef}
+          value={msg}
+          onChange={e => setMsg(e.target.value)}
+          placeholder="Type message..."
+        />
+
+        <button onClick={send}>
+          Send
+        </button>
+
+      </div>
+
+    </div>
+
+  );
+
+    }
+// =============================================================
+// STUDYBUDDY — SEGMENT 5 of 5
+// This segment: Notes · Goals
+// =============================================================
+
+
+// ---------- NOTES VIEW ----------
+
+function NotesView({ data, update, userId, u, otherU, other, showToast }) {
+
+  const [title,setTitle] = React.useState("");
+  const [body,setBody] = React.useState("");
+  const [tag,setTag] = React.useState("");
+  const [editId,setEditId] = React.useState(null);
+  const [selected,setSelected] = React.useState(null);
+  const [search,setSearch] = React.useState("");
+  const [filter,setFilter] = React.useState("all");
+
+  const COLORS = [
+    "#818cf8",
+    "#34d399",
+    "#f59e0b",
+    "#f87171",
+    "#c084fc",
+    "#38bdf8",
+    "#fb923c"
+  ];
+
+  const [noteColor,setNoteColor] = React.useState(COLORS[0]);
+
+  const save = () => {
+
+    if(!title.trim()){
+      showToast("Add a title","error");
+      return;
+    }
+
+    if(editId){
+
+      update(d=>{
+        const n = d.notes.find(x=>x.id===editId);
+        if(n){
+          n.title = title;
+          n.body = body;
+          n.tag = tag;
+          n.color = noteColor;
+          n.updatedAt = Date.now();
+        }
+      });
+
+      showToast("Note updated");
+
+    }else{
+
+      update(d=>{
+        d.notes.push({
+          id:Date.now(),
+          title,
+          body,
+          tag,
+          color:noteColor,
+          owner:userId,
+          ts:Date.now(),
+          updatedAt:Date.now(),
+          pinned:false
+        });
+      });
+
+      showToast("Note saved");
+
+    }
+
+    setTitle("");
+    setBody("");
+    setTag("");
+    setNoteColor(COLORS[0]);
+    setEditId(null);
+  };
+
+  const startEdit = (n)=>{
+
+    setTitle(n.title);
+    setBody(n.body || "");
+    setTag(n.tag || "");
+    setNoteColor(n.color || COLORS[0]);
+    setEditId(n.id);
+    setSelected(null);
+
+    window.scrollTo({
+      top:0,
+      behavior:"smooth"
+    });
+  };
+
+  const remove = (id)=>{
+
+    update(d=>{
+      d.notes = d.notes.filter(x=>x.id !== id);
+    });
+
+    setSelected(null);
+    showToast("Note deleted");
+  };
+
+  const pinNote = (id)=>{
+
+    update(d=>{
+      const n = d.notes.find(x=>x.id===id);
+      if(n) n.pinned = !n.pinned;
+    });
+  };
+
+  let notes = [...(data.notes || [])];
+
+  if(filter !== "all"){
+    notes = notes.filter(n=>n.owner===filter);
+  }
+
+  if(search.trim()){
+    notes = notes.filter(n =>
+      n.title.toLowerCase().includes(search.toLowerCase()) ||
+      n.body?.toLowerCase().includes(search.toLowerCase()) ||
+      n.tag?.toLowerCase().includes(search.toLowerCase())
+    );
+  }
+
+  notes.sort((a,b)=>
+    (b.pinned?1:0)-(a.pinned?1:0) ||
+    (b.updatedAt||b.ts)-(a.updatedAt||a.ts)
+  );
+
+  const viewNote = selected
+    ? data.notes.find(x=>x.id===selected)
+    : null;
+
+  return (
+    <div>
+      <h2>Shared Notes</h2>
+
+      <input
+        placeholder="Note title"
+        value={title}
+        onChange={e=>setTitle(e.target.value)}
+      />
+
+      <textarea
+        placeholder="Write note"
+        value={body}
+        onChange={e=>setBody(e.target.value)}
+      />
+
+      <input
+        placeholder="Tag"
+        value={tag}
+        onChange={e=>setTag(e.target.value)}
+      />
+
+      <button onClick={save}>
+        {editId ? "Save Changes" : "Save Note"}
+      </button>
+
+      <hr/>
+
+      {notes.map(n=>(
+        <div key={n.id} style={{marginBottom:10}}>
+          <h4>{n.title}</h4>
+          <p>{n.body}</p>
+
+          <button onClick={()=>startEdit(n)}>Edit</button>
+          <button onClick={()=>remove(n.id)}>Delete</button>
+          <button onClick={()=>pinNote(n.id)}>Pin</button>
+        </div>
+      ))}
+
+    </div>
+  );
+}
+
+
+
+// ---------- GOALS VIEW ----------
+
+
+function GoalsView({ data, update, userId, showToast }) {
+
+  const [text,setText] = React.useState("");
+  const [deadline,setDeadline] = React.useState("");
+
+  const addGoal = ()=>{
+
+    if(!text.trim()){
+      showToast("Write a goal","error");
+      return;
+    }
+
+    update(d=>{
+
+      if(!d.goals[userId]){
+        d.goals[userId] = [];
+      }
+
+      d.goals[userId].push({
+        id:Date.now(),
+        text:text.trim(),
+        done:false,
+        deadline,
+        ts:Date.now(),
+        completedAt:null
+      });
+
+    });
+
+    setText("");
+    setDeadline("");
+
+    showToast("Goal added");
+  };
+
+
+  const toggle = (id)=>{
+
+    update(d=>{
+
+      const g = d.goals[userId]?.find(x=>x.id===id);
+
+      if(g){
+        g.done = !g.done;
+        g.completedAt = g.done ? Date.now() : null;
+      }
+
+    });
+  };
+
+
+  const remove = (id)=>{
+
+    update(d=>{
+      d.goals[userId] =
+        d.goals[userId]?.filter(x=>x.id!==id) || [];
+    });
+
+    showToast("Goal removed");
+  };
+
+
+  const goals = data.goals[userId] || [];
+
+  return (
+    <div>
+
+      <h2>Goals</h2>
+
+      <input
+        placeholder="Goal"
+        value={text}
+        onChange={e=>setText(e.target.value)}
+      />
+
+      <input
+        type="date"
+        value={deadline}
+        onChange={e=>setDeadline(e.target.value)}
+      />
+
+      <button onClick={addGoal}>
+        Add Goal
+      </button>
+
+      <hr/>
+
+      {goals.map(g=>(
+        <div key={g.id}>
+
+          <span
+            style={{
+              textDecoration: g.done
+                ? "line-through"
+                : "none"
+            }}
+          >
+            {g.text}
+          </span>
+
+          <button onClick={()=>toggle(g.id)}>
+            ✓
+          </button>
+
+          <button onClick={()=>remove(g.id)}>
+            ×
+          </button>
+
+        </div>
+      ))}
+
+    </div>
+  );
+            }
