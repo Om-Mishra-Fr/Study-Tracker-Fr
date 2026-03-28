@@ -3,8 +3,7 @@
 // Imports · Storage · Default Data · Global Styles
 // ===============================================================
 
-import { useState, useEffect, useRef, useCallback } from "react";
-
+import React from "react";
 // ---------------- GLOBAL CSS ----------------
 const GLOBAL_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
